@@ -33,14 +33,14 @@ Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-l languag
      - Do not delete the temporary files
 -d : Deskew each page before performing OCR
 -c : Clean each page before performing OCR
--i : Incorporate the cleaned image in the final PDF file (by default the original image	
+-i : Incorporate the cleaned image in the final PDF file (by default the original image
      image, or the deskewed image if the -d option is set, is incorporated)
--o : If the resolution of an image is lower than dpi value provided as argument, provide the OCR engine with 
+-o : If the resolution of an image is lower than dpi value provided as argument, provide the OCR engine with
      an oversampled image having the latter dpi value. This can improve the OCR results but can lead to a larger output PDF file.
      (default: no oversampling performed)
 -f : Force to OCR the whole document, even if some page already contain font data.  Any text data will be rendered
      to raster format and then fed through OCR.
-     (which should not be the case for PDF files built from scnanned images) 
+     (which should not be the case for PDF files built from scnanned images)
 -s : If pages contain font data, do not perform processing on that page, but include the page in the final output.
 -l : Set the language of the PDF file in order to improve OCR results (default "eng")
      Any language supported by tesseract is supported (Tesseract uses 3-character ISO 639-2 language codes)
@@ -50,7 +50,7 @@ Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-l languag
      (this option can be used more than once)
      Note 1: The configuration file must be available in the "tessdata/configs" folder of your tesseract installation
 inputfile  : PDF file to be OCRed
-outputfile : The PDF/A file that will be generated 
+outputfile : The PDF/A file that will be generated
 --------------------------------------------------------------------------------------
 EOF
 }
@@ -62,9 +62,9 @@ EOF
 # Param1 : Relative path
 # Returns: 1 if the folder in which the file is located does not exist
 #          0 otherwise
-################################################# 
+#################################################
 absolutePath() {
-	local wdsave absolutepath 
+	local wdsave absolutepath
 	wdsave="$(pwd)"
 	! cd "$(dirname "$1")" 1> /dev/null 2> /dev/null && return 1
 	absolutepath="$(pwd)/$(basename "$1")"
@@ -76,7 +76,7 @@ absolutePath() {
 
 # Initialization the configuration parameters with default values
 VERBOSITY="$LOG_ERR"		# default verbosity level
-LAN="eng"			# default language of the PDF file (required to get good OCR results)
+LANGUAGE="eng"			# default language of the PDF file (required to get good OCR results)
 KEEP_TMP="0"			# 0=no, 1=yes (keep the temporary files)
 PREPROCESS_DESKEW="0"		# 0=no, 1=yes (deskew image)
 PREPROCESS_CLEAN="0"		# 0=no, 1=yes (clean image to improve OCR)
@@ -101,7 +101,7 @@ while getopts ":hvgkdcio:fsl:j:C:" opt; do
 		o) OVERSAMPLING_DPI="$OPTARG" ;;
 		f) FORCE_OCR="1" ;;
 		s) SKIP_TEXT="1" ;;
-		l) LAN="$OPTARG" ;;
+		l) LANGUAGE="$OPTARG" ;;
 		j) JOBS="-j $OPTARG" ;;
 		C) TESS_CFG_FILES="$OPTARG $TESS_CFG_FILES" ;;
 		\?)
@@ -221,7 +221,7 @@ fi
 
 
 # check if the languages passed to tesseract are all supported
-for currentlan in `echo "$LAN" | sed 's/+/ /g'`; do
+for currentlan in `echo "$LANGUAGE" | sed 's/+/ /g'`; do
 	if ! tesseract --list-langs 2>&1 | grep "^$currentlan\$" > /dev/null; then
 		echo "The language \"$currentlan\" is not supported by tesseract."
 		tesseract --list-langs 2>&1 | tr '\n' ' '; echo
@@ -240,7 +240,7 @@ done
 # But in Linux '-t template' is handled differently than in FreeBSD
 # Therefore different calls must be used for Linux and for FreeBSD
 prefix="$(date +"%Y%m%d_%H%M").filename.$(basename "$FILE_INPUT_PDF" | sed 's/[.][^.]*$//')"	# prefix made of date, time and pdf file name without extension
-TMP_FLD=`mktemp -d 2>/dev/null || mktemp -d -t "${prefix}" 2>/dev/null`				# try Linux syntax first, if it fails try FreeBSD/OSX			
+TMP_FLD=`mktemp -d 2>/dev/null || mktemp -d -t "${prefix}" 2>/dev/null`				# try Linux syntax first, if it fails try FreeBSD/OSX
 if [ $? -ne 0 ]; then
 	if [ -z "$TMPDIR" ]; then
 		echo "Could not create folder for temporary files. Please ensure you have sufficient right and \"/tmp\" exists"
@@ -266,20 +266,20 @@ numpages=`tail -n 1 "$FILE_PAGES_INFO" | cut -f1 -d" "`
 
 # process each page of the input pdf file
 parallel --progress --gnu --no-notice -q -k --halt-on-error 1 "$OCR_PAGE" "$FILE_INPUT_PDF" "{}" "$numpages" "$TMP_FLD" \
-	"$VERBOSITY" "$LAN" "$KEEP_TMP" "$PREPROCESS_DESKEW" "$PREPROCESS_CLEAN" "$PREPROCESS_CLEANTOPDF" "$OVERSAMPLING_DPI" \
+	"$VERBOSITY" "$LANGUAGE" "$KEEP_TMP" "$PREPROCESS_DESKEW" "$PREPROCESS_CLEAN" "$PREPROCESS_CLEANTOPDF" "$OVERSAMPLING_DPI" \
 	"$PDF_NOIMG" "$TESS_CFG_FILES" "$FORCE_OCR" "$SKIP_TEXT" < "$FILE_PAGES_INFO"
 ret_code="$?"
-[ $ret_code -ne 0 ] && exit $ret_code 
+[ $ret_code -ne 0 ] && exit $ret_code
 
 # concatenate all pages and convert the pdf file to match PDF/A format
-[ $VERBOSITY -ge $LOG_DEBUG ] && echo "Output file: Concatenating all pages to the final PDF/A file" 
+[ $VERBOSITY -ge $LOG_DEBUG ] && echo "Output file: Concatenating all pages to the final PDF/A file"
 ! gs -dQUIET -dPDFA -dBATCH -dNOPAUSE -dUseCIEColor \
 	-sProcessColorModel=DeviceCMYK -sDEVICE=pdfwrite -sPDFACompatibilityPolicy=2 \
 	-sOutputFile="$FILE_OUTPUT_PDFA" "${TMP_FLD}/"*ocred*.pdf 1> /dev/null 2> /dev/null \
 	&& echo "Could not concatenate all pages to the final PDF/A file. Exiting..." && exit $EXIT_OTHER_ERROR
 
 # validate generated pdf file (compliance to PDF/A)
-[ $VERBOSITY -ge $LOG_DEBUG ] && echo "Output file: Checking compliance to PDF/A standard" 
+[ $VERBOSITY -ge $LOG_DEBUG ] && echo "Output file: Checking compliance to PDF/A standard"
 java -jar "$JHOVE" -c "$JHOVE_CFG" -m PDF-hul "$FILE_OUTPUT_PDFA" > "$FILE_VALIDATION_LOG"
 grep -i "Status|Message" "$FILE_VALIDATION_LOG" # summary of the validation
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "The full validation log is available here: \"$FILE_VALIDATION_LOG\""
