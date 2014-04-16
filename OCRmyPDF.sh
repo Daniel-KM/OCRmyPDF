@@ -262,10 +262,10 @@ FILE_VALIDATION_LOG="${TMP_FLD}/pdf_validation.log"			# log file containing the 
 	&& echo "Could not get size of PDF pages. Exiting..." && exit $EXIT_BAD_INPUT_FILE
 # removing empty lines (last one should be) and add page # before each line
 sed '/^$/d' "$FILE_TMP" | awk '{printf "%04d %s\n", NR, $0}' > "$FILE_PAGES_INFO"
-numpages=`tail -n 1 "$FILE_PAGES_INFO" | cut -f1 -d" "`
+totalPages=`tail -n 1 "$FILE_PAGES_INFO" | cut -f1 -d" "`
 
 # process each page of the input pdf file
-parallel --progress --gnu --no-notice -q -k --halt-on-error 1 "$OCR_PAGE" "$FILE_INPUT_PDF" "{}" "$numpages" "$TMP_FLD" \
+parallel --progress --gnu --no-notice -q -k --halt-on-error 1 "$OCR_PAGE" "$FILE_INPUT_PDF" "{}" "$totalPages" "$TMP_FLD" \
 	"$VERBOSITY" "$LANGUAGE" "$KEEP_TMP" "$PREPROCESS_DESKEW" "$PREPROCESS_CLEAN" "$PREPROCESS_CLEANTOPDF" "$OVERSAMPLING_DPI" \
 	"$PDF_NOIMG" "$TESS_CFG_FILES" "$FORCE_OCR" "$SKIP_TEXT" < "$FILE_PAGES_INFO"
 ret_code="$?"

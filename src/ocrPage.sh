@@ -11,7 +11,7 @@
 # Initialization of variables passed by arguments
 FILE_INPUT_PDF="$1"			# PDF file containing the page to be OCRed
 PAGE_INFO="$2"				# Various characteristics of the page to be OCRed
-NUM_PAGES="$3"				# Total number of page of the PDF file (required for logging)
+TOTAL_PAGES="$3"			# Total number of page of the PDF file (required for logging)
 TMP_FLD="$4"				# Folder where the temporary files should be placed
 VERBOSITY="$5"				# Requested verbosity
 LANGUAGE="$6"				# Language of the file to be OCRed
@@ -97,7 +97,7 @@ getImgInfo() {
 
 
 page=`echo $PAGE_INFO | cut -f1 -d" "`
-[ $VERBOSITY -ge $LOG_INFO ] && echo "Processing page $page / $NUM_PAGES"
+[ $VERBOSITY -ge $LOG_INFO ] && echo "Processing page $page / $TOTAL_PAGES"
 
 # get width / height of PDF page (in pt)
 widthPDF=`echo $PAGE_INFO | cut -f2 -d" "`
