@@ -1,6 +1,7 @@
 #!/bin/sh
 ##############################################################################
 # Copyright (c) 2013-14: fritz-hh from Github (https://github.com/fritz-hh)
+# Copyright (c) 2014 Daniel Berthereau
 ##############################################################################
 
 # Import required scripts
@@ -22,6 +23,7 @@ Copyright: fritz-hh  from Github (https://github.com/fritz-hh)
 Version: $VERSION
 
 Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-l language] [-j jobs] [-C filename] inputfile outputfile
+       OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-l language] [-j jobs] [-C filename] -a -p outputfile inputfiles
 
 -h : Display this help message
 -v : Increase the verbosity (this option can be used more than once) (e.g. -vvv)
@@ -40,17 +42,21 @@ Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-l languag
      (default: no oversampling performed)
 -f : Force to OCR the whole document, even if some page already contain font data.  Any text data will be rendered
      to raster format and then fed through OCR.
-     (which should not be the case for PDF files built from scnanned images)
+     (which should not be the case for PDF files built from scanned images)
 -s : If pages contain font data, do not perform processing on that page, but include the page in the final output.
 -l : Set the language of the PDF file in order to improve OCR results (default "eng")
      Any language supported by tesseract is supported (Tesseract uses 3-character ISO 639-2 language codes)
      Multiple languages may be specified, separated by '+' characters.
 -j : Maximum number of parallel tasks to run.
+-a : Use a list of images as input instead of a pdf file. In that case, the
+     input should be a list of file or a string to be expanded by shell like "image_*.ext"
+     and the output should be set with the -o option.
+-p : Output file (required with -a, else forbidden)
 -C : Pass an additional configuration file to the tesseract OCR engine.
      (this option can be used more than once)
      Note 1: The configuration file must be available in the "tessdata/configs" folder of your tesseract installation
-inputfile  : PDF file to be OCRed
-outputfile : The PDF/A file that will be generated
+inputfile  : PDF file (or list of images when -a is used) to be OCRed
+outputfile : The PDF/A file that will be generated (except if -p is used)
 --------------------------------------------------------------------------------------
 EOF
 }
@@ -85,11 +91,13 @@ OVERSAMPLING_DPI="0"		# 0=do not perform oversampling (dpi value under which ove
 PDF_NOIMG="0"			# 0=no, 1=yes (generates each PDF page twice, with and without image)
 FORCE_OCR="0"			# 0=do not force, 1=force (force to OCR the whole document, even if some page already contain font data)
 SKIP_TEXT="0"			# 0=do not skip text pages, 1=skip text pages
+USE_IMAGES="0"                  # 0=no, 1=yes (use existing images)
 TESS_CFG_FILES=""		# list of additional configuration files to be used by tesseract
-JOBS=""
+JOBS=""                         # Parameter for parallel jobs
+FILE_OUTPUT_PDFA=""             # Output file
 
 # Parse optional command line arguments
-while getopts ":hvgkdcio:fsl:j:C:" opt; do
+while getopts ":hvgkdcio:fsl:j:ap:C:" opt; do
 	case $opt in
 		h) usage ; exit 0 ;;
 		v) VERBOSITY=$(($VERBOSITY+1)) ;;
@@ -102,7 +110,9 @@ while getopts ":hvgkdcio:fsl:j:C:" opt; do
 		f) FORCE_OCR="1" ;;
 		s) SKIP_TEXT="1" ;;
 		l) LANGUAGE="$OPTARG" ;;
-		j) JOBS="-j $OPTARG" ;;
+		j) JOBS="--jobs $OPTARG" ;;
+                a) USE_IMAGES="1" ;;
+                p) FILE_OUTPUT_PDFA="$OPTARG" ;;
 		C) TESS_CFG_FILES="$OPTARG $TESS_CFG_FILES" ;;
 		\?)
 			echo "Invalid option: -$OPTARG"
@@ -115,33 +125,71 @@ while getopts ":hvgkdcio:fsl:j:C:" opt; do
 	esac
 done
 
+# Check force and skip options.
+if [ "$SKIP_TEXT" -eq "1" -a "$FORCE_OCR" -eq "1" ]; then
+        echo "Options -f and -s are mutually exclusive; choose one or the other"
+        usage
+        exit $EXIT_BAD_ARGS
+fi
+
+# Check -a and -p options.
+if [ $USE_IMAGES -eq 0 ] && [ -n "$FILE_OUTPUT_PDFA" ]; then
+        echo "Option -p cannot be used without the option -a."
+        usage
+        exit $EXIT_BAD_ARGS
+elif [ $USE_IMAGES -eq 1 ] && [ -z "$FILE_OUTPUT_PDFA" ]; then
+        echo "Option -p is required when the option -a is used."
+        usage
+        exit $EXIT_BAD_ARGS
+fi
+
 # Remove the optional arguments parsed above.
 shift $((OPTIND-1))
 
 # Check if the number of mandatory parameters provided is as expected
-if [ "$#" -ne "2" ]; then
-	echo "Exactly two mandatory argument shall be provided ($# arguments provided)"
-	usage
-	exit $EXIT_BAD_ARGS
+if [ $USE_IMAGES -eq 0 ] && [ "$#" -ne "2" ]; then
+        echo "Exactly two mandatory arguments (input and output files) shall be provided ($# arguments provided)."
+        usage
+        exit $EXIT_BAD_ARGS
+elif [ $USE_IMAGES -eq 1 ] && [ "$#" -lt "1" ]; then
+        echo "When using images files, the list of files should be provided."
+        usage
+        exit $EXIT_BAD_ARGS
 fi
 
-if [ "$SKIP_TEXT" -eq "1" -a "$FORCE_OCR" -eq "1" ]; then
-	echo "Options -f and -s are mutually exclusive; choose one or the other"
-	usage
-	exit $EXIT_BAD_ARGS
+# Check files and get absolute paths.
+if [ $USE_IMAGES -eq 0 ]; then
+        if [ ! -f "$1" ]; then
+                echo "The input file does not exist. Exiting..." && exit $EXIT_BAD_ARGS
+        fi
+        ! absolutePath "$1" > /dev/null \
+                && echo "The folder in which the input file should be located does not exist. Exiting..." && exit $EXIT_BAD_ARGS
+        FILE_INPUT_PDF="`absolutePath "$1"`"
+        ! absolutePath "$2" > /dev/null \
+                && echo "The folder in which the output file should be generated does not exist. Exiting..." && exit $EXIT_BAD_ARGS
+        FILE_OUTPUT_PDFA="`absolutePath "$2"`"
+else
+        for image in "${@}"; do
+                if [ ! -f "$image" ]; then
+                        echo "The input file '$image' does not exist. Exiting..." && exit $EXIT_BAD_ARGS
+                fi
+                ! absolutePath "$image" > /dev/null \
+                        && echo "The folder in which input files should be generated does not exist. Exiting..." && exit $EXIT_BAD_ARGS
+        done
+
+        FILE_INPUT_PDF=""
+        ! absolutePath "$FILE_OUTPUT_PDFA" > /dev/null \
+                && echo "The folder in which the output file should be generated does not exist. Exiting..." && exit $EXIT_BAD_ARGS
+        FILE_OUTPUT_PDFA="`absolutePath "$FILE_OUTPUT_PDFA"`"
+
+        [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Using a list of images."
 fi
 
-! absolutePath "$1" > /dev/null \
-	&& echo "The folder in which the input file should be located does not exist. Exiting..." && exit $EXIT_BAD_ARGS
-FILE_INPUT_PDF="`absolutePath "$1"`"
-! absolutePath "$2" > /dev/null \
-	&& echo "The folder in which the output file should be generated does not exist. Exiting..." && exit $EXIT_BAD_ARGS
-FILE_OUTPUT_PDFA="`absolutePath "$2"`"
+# Check existing file.
+[ -e "$FILE_OUTPUT_PDFA" ] && echo "The output file already exists. Exiting..." && exit 0
 
-[ -e "$2" ] && echo "The output file already exists. Exiting..." && exit 0
-
-
-# set script path as working directory
+# Get current path and set script path as working directory.
+CURRENT_PATH="`pwd`"
 cd "`dirname $0`"
 
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "$TOOLNAME version: $VERSION"
@@ -252,24 +300,57 @@ fi
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Created temporary folder: \"$TMP_FLD\""
 
 FILE_TMP="${TMP_FLD}/tmp.txt"						# temporary file with a very short lifetime (may be used for several things)
+FILE_INPUT_FILES="${TMP_FLD}/input-files.txt"                           # temporary file for full filenames
 FILE_PAGES_INFO="${TMP_FLD}/pages-info.txt"				# for each page: page #; width in pt; height in pt
 FILE_VALIDATION_LOG="${TMP_FLD}/pdf_validation.log"			# log file containing the results of the validation of the PDF/A file
 
 
 # get the size of each pdf page (width / height) in pt (i.e. inch/72)
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Input file: Extracting size of each page (in pt)"
-! identify -format "%w %h\n" "$FILE_INPUT_PDF" > "$FILE_TMP" \
-	&& echo "Could not get size of PDF pages. Exiting..." && exit $EXIT_BAD_INPUT_FILE
-# removing empty lines (last one should be) and add page # before each line
-sed '/^$/d' "$FILE_TMP" | awk '{printf "%04d %s\n", NR, $0}' > "$FILE_PAGES_INFO"
-totalPages=`tail -n 1 "$FILE_PAGES_INFO" | cut -f1 -d" "`
+if [ $USE_IMAGES -eq 0 ]; then
+        ! identify -format "%w %h\n" "$FILE_INPUT_PDF" > "$FILE_TMP" \
+                && echo "Could not get size of PDF pages. Exiting..." && exit $EXIT_BAD_INPUT_FILE
 
-# process each page of the input pdf file
-parallel --progress --gnu --no-notice -q -k --halt-on-error 1 "$OCR_PAGE" "$FILE_INPUT_PDF" "{}" "$totalPages" "$TMP_FLD" \
-	"$VERBOSITY" "$LANGUAGE" "$KEEP_TMP" "$PREPROCESS_DESKEW" "$PREPROCESS_CLEAN" "$PREPROCESS_CLEANTOPDF" "$OVERSAMPLING_DPI" \
-	"$PDF_NOIMG" "$TESS_CFG_FILES" "$FORCE_OCR" "$SKIP_TEXT" < "$FILE_PAGES_INFO"
-ret_code="$?"
-[ $ret_code -ne 0 ] && exit $ret_code
+        # removing empty lines (last one should be) and add page # before each line
+        sed '/^$/d' "$FILE_TMP" | awk '{printf "%04d %s\n", NR, $0}' > "$FILE_PAGES_INFO"
+
+        # Calculate the total number of pages.
+        totalPages=`tail -n 1 "$FILE_PAGES_INFO" | cut -f1 -d" "`
+
+        # process each page of the input pdf file
+        parallel --progress --eta --gnu --no-notice --quote --keep-order $JOBS --halt-on-error 1 "$OCR_PAGE" "$FILE_INPUT_PDF" "{}" "$totalPages" "$TMP_FLD" \
+                "$VERBOSITY" "$LANGUAGE" "$KEEP_TMP" "$PREPROCESS_DESKEW" "$PREPROCESS_CLEAN" "$PREPROCESS_CLEANTOPDF" "$OVERSAMPLING_DPI" \
+                "$PDF_NOIMG" "$TESS_CFG_FILES" "$FORCE_OCR" "$SKIP_TEXT" :::: "$FILE_PAGES_INFO"
+        ret_code="$?"
+        [ $ret_code -ne 0 ] && exit $ret_code
+else
+        touch $FILE_INPUT_FILES
+        # To get full path of images, we need to go back original path.
+        cd "$CURRENT_PATH"
+        for image in "${@}"; do
+                echo `absolutePath "$image"` >> "$FILE_INPUT_FILES"
+        done
+        cd "`dirname $0`"
+
+        parallel --progress --eta --gnu --keep-order $JOBS --halt-on-error 1 --no-run-if-empty 'identify -format "%w %h"' "{}" :::: "$FILE_INPUT_FILES" > "$FILE_TMP"
+        ret_code="$?"
+        [ $ret_code -ne 0 ] && exit $ret_code
+
+        # removing empty lines (last one should be) and add page # before each line
+        sed '/^$/d' "$FILE_TMP" | awk '{printf "%04d %s\n", NR, $0}' > "$FILE_PAGES_INFO"
+
+        # Calculate the total number of pages.
+        totalPages=`tail -n 1 "$FILE_PAGES_INFO" | cut -f1 -d" "`
+
+        # process each page of the input pdf file
+        parallel --progress --eta --gnu --no-notice --quote --keep-order $JOBS --halt-on-error 1 --xapply "$OCR_PAGE" "{1}" "{2}" "$totalPages" "$TMP_FLD" \
+                "$VERBOSITY" "$LANGUAGE" "$KEEP_TMP" "$PREPROCESS_DESKEW" "$PREPROCESS_CLEAN" "$PREPROCESS_CLEANTOPDF" "$OVERSAMPLING_DPI" \
+                "$PDF_NOIMG" "$TESS_CFG_FILES" "$FORCE_OCR" "$SKIP_TEXT" :::: "$FILE_INPUT_FILES" :::: "$FILE_PAGES_INFO"
+        ret_code="$?"
+        [ $ret_code -ne 0 ] && exit $ret_code
+fi
+
+
 
 # concatenate all pages and convert the pdf file to match PDF/A format
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Output file: Concatenating all pages to the final PDF/A file"
@@ -291,7 +372,6 @@ grep -i 'Status.*Not well-formed' "$FILE_VALIDATION_LOG" && pdf_valid=0
 ! grep -i 'Profile:.*PDF/A-1' "$FILE_VALIDATION_LOG" > /dev/null && echo "PDF file profile is not PDF/A-1" && pdf_valid=0
 [ $pdf_valid -ne 1 ] && echo "Output file: The generated PDF/A file is INVALID"
 [ $pdf_valid -eq 1 ] && [ $VERBOSITY -ge $LOG_INFO ] && echo "Output file: The generated PDF/A file is VALID"
-
 
 
 
