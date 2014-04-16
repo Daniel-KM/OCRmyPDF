@@ -171,7 +171,12 @@ widthCurImg=$(($dpi*$widthPDF/72))
 heightCurImg=$(($dpi*$heightPDF/72))
 if [ "$PREPROCESS_DESKEW" -eq "1" ]; then
 	[ $VERBOSITY -ge $LOG_DEBUG ] && echo "Page $page: Deskewing image"
-	! python2 $SRC/leptonica.py deskew -r $dpi "$curImgPixmap" "$curImgPixmapDeskewed" && echo "Problem file: $curImgPixmap" && exit $?
+	if [ "$DESKEW_TOOL" = "Leptonica" ]; then
+                ! python2 $SRC/leptonica.py deskew -r $dpi "$curImgPixmap" "$curImgPixmapDeskewed" && echo "Problem file: $curImgPixmap" && exit $?
+        else
+                ! convert "$curImgPixmap" -deskew 40% -gravity center -extent ${widthCurImg}x${heightCurImg} "$curImgPixmapDeskewed" \
+                        && echo "Could not deskew \"$curImgPixmap\". Exiting..." && exit $EXIT_OTHER_ERROR
+        fi
 else
 	ln -s `basename "$curImgPixmap"` "$curImgPixmapDeskewed"
 fi

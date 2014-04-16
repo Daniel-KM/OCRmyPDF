@@ -3,6 +3,7 @@
 #####################################################################################
 
 DEFAULT_DPI=300				# dpi value used as fall back if the page dpi cannot be determined
+DESKEW_TOOL="ImageMagick"               # Use ImageMagick or Leptonica to deskew a page
 
 #####################################################################################
 # Do NOT change the following parameters
