@@ -22,8 +22,8 @@ tesseract engine)
 Copyright: fritz-hh  from Github (https://github.com/fritz-hh)
 Version: $VERSION
 
-Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-l language] [-j jobs] [-C filename] inputfile outputfile
-       OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-l language] [-j jobs] [-C filename] -a -p outputfile inputfiles
+Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-l language] [-j jobs] [-C filename] inputfile outputfile
+       OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-l language] [-j jobs] [-C filename] -a -p outputfile inputfiles
 
 -h : Display this help message
 -v : Increase the verbosity (this option can be used more than once) (e.g. -vvv)
@@ -126,18 +126,18 @@ while getopts ":hvgkdcio:fsl:j:ap:C:" opt; do
 done
 
 # Check force and skip options.
-if [ "$SKIP_TEXT" -eq "1" -a "$FORCE_OCR" -eq "1" ]; then
+if [ "$SKIP_TEXT" = "1" -a "$FORCE_OCR" = "1" ]; then
         echo "Options -f and -s are mutually exclusive; choose one or the other"
         usage
         exit $EXIT_BAD_ARGS
 fi
 
 # Check -a and -p options.
-if [ $USE_IMAGES -eq 0 ] && [ -n "$FILE_OUTPUT_PDFA" ]; then
+if [ "$USE_IMAGES" = "0" ] && [ -n "$FILE_OUTPUT_PDFA" ]; then
         echo "Option -p cannot be used without the option -a."
         usage
         exit $EXIT_BAD_ARGS
-elif [ $USE_IMAGES -eq 1 ] && [ -z "$FILE_OUTPUT_PDFA" ]; then
+elif [ "$USE_IMAGES" = "1" ] && [ -z "$FILE_OUTPUT_PDFA" ]; then
         echo "Option -p is required when the option -a is used."
         usage
         exit $EXIT_BAD_ARGS
@@ -147,18 +147,18 @@ fi
 shift $((OPTIND-1))
 
 # Check if the number of mandatory parameters provided is as expected
-if [ $USE_IMAGES -eq 0 ] && [ "$#" -ne "2" ]; then
+if [ "$USE_IMAGES" = "0" ] && [ "$#" -ne 2 ]; then
         echo "Exactly two mandatory arguments (input and output files) shall be provided ($# arguments provided)."
         usage
         exit $EXIT_BAD_ARGS
-elif [ $USE_IMAGES -eq 1 ] && [ "$#" -lt "1" ]; then
+elif [ "$USE_IMAGES" = "1" ] && [ "$#" -lt 1 ]; then
         echo "When using images files, the list of files should be provided."
         usage
         exit $EXIT_BAD_ARGS
 fi
 
 # Check files and get absolute paths.
-if [ $USE_IMAGES -eq 0 ]; then
+if [ "$USE_IMAGES" = "0" ]; then
         if [ ! -f "$1" ]; then
                 echo "The input file does not exist. Exiting..." && exit $EXIT_BAD_ARGS
         fi
@@ -203,7 +203,7 @@ cd "`dirname $0`"
 ! command -v pdffonts > /dev/null && echo "Please install poppler-utils. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
 ! command -v pdftoppm > /dev/null && echo "Please install poppler-utils with the option --enable-splash-output enabled. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
 ! command -v pdfseparate > /dev/null && echo "Please install or update poppler-utils to at least 0.24.5. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
-[ $PREPROCESS_CLEAN -eq 1 ] && ! command -v unpaper > /dev/null && echo "Please install unpaper. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
+[ "$PREPROCESS_CLEAN" = "1" ] && ! command -v unpaper > /dev/null && echo "Please install unpaper. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
 ! command -v tesseract > /dev/null && echo "Please install tesseract and tesseract-data. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
 ! command -v python2 > /dev/null && echo "Please install python v2.x. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
 ! python2 -c 'import lxml' 2>/dev/null && echo "Please install the python library lxml. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
@@ -219,7 +219,7 @@ cd "`dirname $0`"
 reqtessversion="3.02.01"
 tessversion=`tesseract -v 2>&1 | grep "tesseract" | sed s/[^0-9.]//g`
 tesstooold=$(echo "`echo $tessversion | sed s/[.]//2`-`echo $reqtessversion | sed s/[.]//2` < 0" | bc)
-[ "$tesstooold" -eq "1" ] \
+[ "$tesstooold" = "1" ] \
 	&& echo "Please install tesseract ${reqtessversion} or newer (currently installed version is ${tessversion})" && exit $EXIT_MISSING_DEPENDENCY
 
 # ensure the right GNU parallel version is installed
@@ -289,7 +289,7 @@ done
 # Therefore different calls must be used for Linux and for FreeBSD
 prefix="$(date +"%Y%m%d_%H%M").filename.$(basename "$FILE_INPUT_PDF" | sed 's/[.][^.]*$//')"	# prefix made of date, time and pdf file name without extension
 TMP_FLD=`mktemp -d 2>/dev/null || mktemp -d -t "${prefix}" 2>/dev/null`				# try Linux syntax first, if it fails try FreeBSD/OSX
-if [ $? -ne 0 ]; then
+if [ "$?" -ne 0 ]; then
 	if [ -z "$TMPDIR" ]; then
 		echo "Could not create folder for temporary files. Please ensure you have sufficient right and \"/tmp\" exists"
 	else
@@ -307,7 +307,7 @@ FILE_VALIDATION_LOG="${TMP_FLD}/pdf_validation.log"			# log file containing the 
 
 # get the size of each pdf page (width / height) in pt (i.e. inch/72)
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Input file: Extracting size of each page (in pt)"
-if [ $USE_IMAGES -eq 0 ]; then
+if [ "$USE_IMAGES" = "0" ]; then
         ! identify -format "%w %h\n" "$FILE_INPUT_PDF" > "$FILE_TMP" \
                 && echo "Could not get size of PDF pages. Exiting..." && exit $EXIT_BAD_INPUT_FILE
 
@@ -322,7 +322,7 @@ if [ $USE_IMAGES -eq 0 ]; then
                 "$VERBOSITY" "$LANGUAGE" "$KEEP_TMP" "$PREPROCESS_DESKEW" "$PREPROCESS_CLEAN" "$PREPROCESS_CLEANTOPDF" "$OVERSAMPLING_DPI" \
                 "$PDF_NOIMG" "$TESS_CFG_FILES" "$FORCE_OCR" "$SKIP_TEXT" :::: "$FILE_PAGES_INFO"
         ret_code="$?"
-        [ $ret_code -ne 0 ] && exit $ret_code
+        [ "$ret_code" -ne 0 ] && exit $ret_code
 else
         touch $FILE_INPUT_FILES
         # To get full path of images, we need to go back original path.
@@ -334,7 +334,7 @@ else
 
         parallel --progress --eta --gnu --keep-order $JOBS --halt-on-error 1 --no-run-if-empty 'identify -format "%w %h"' "{}" :::: "$FILE_INPUT_FILES" > "$FILE_TMP"
         ret_code="$?"
-        [ $ret_code -ne 0 ] && exit $ret_code
+        [ "$ret_code" -ne 0 ] && exit $ret_code
 
         # removing empty lines (last one should be) and add page # before each line
         sed '/^$/d' "$FILE_TMP" | awk '{printf "%04d %s\n", NR, $0}' > "$FILE_PAGES_INFO"
@@ -347,7 +347,7 @@ else
                 "$VERBOSITY" "$LANGUAGE" "$KEEP_TMP" "$PREPROCESS_DESKEW" "$PREPROCESS_CLEAN" "$PREPROCESS_CLEANTOPDF" "$OVERSAMPLING_DPI" \
                 "$PDF_NOIMG" "$TESS_CFG_FILES" "$FORCE_OCR" "$SKIP_TEXT" :::: "$FILE_INPUT_FILES" :::: "$FILE_PAGES_INFO"
         ret_code="$?"
-        [ $ret_code -ne 0 ] && exit $ret_code
+        [ "$ret_code" -ne 0 ] && exit $ret_code
 fi
 
 
@@ -370,13 +370,13 @@ grep -i 'ErrorMessage' "$FILE_VALIDATION_LOG" && pdf_valid=0
 grep -i 'Status.*not valid' "$FILE_VALIDATION_LOG" && pdf_valid=0
 grep -i 'Status.*Not well-formed' "$FILE_VALIDATION_LOG" && pdf_valid=0
 ! grep -i 'Profile:.*PDF/A-1' "$FILE_VALIDATION_LOG" > /dev/null && echo "PDF file profile is not PDF/A-1" && pdf_valid=0
-[ $pdf_valid -ne 1 ] && echo "Output file: The generated PDF/A file is INVALID"
-[ $pdf_valid -eq 1 ] && [ $VERBOSITY -ge $LOG_INFO ] && echo "Output file: The generated PDF/A file is VALID"
+[ "$pdf_valid" -ne 1 ] && echo "Output file: The generated PDF/A file is INVALID"
+[ "$pdf_valid" -eq 1 ] && [ $VERBOSITY -ge $LOG_INFO ] && echo "Output file: The generated PDF/A file is VALID"
 
 
 
 # delete temporary files
-if [ $KEEP_TMP -eq 0 ]; then
+if [ "$KEEP_TMP" = "0" ]; then
 	[ $VERBOSITY -ge $LOG_DEBUG ] && echo "Deleting temporary files"
 	rm -r -f "${TMP_FLD}"
 fi
@@ -386,4 +386,4 @@ END=`date +%s`
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Script took $(($END-$START)) seconds"
 
 
-[ $pdf_valid -ne 1 ] && exit $EXIT_INVALID_OUPUT_PDFA || exit 0
+[ "$pdf_valid" -ne 1 ] && exit $EXIT_INVALID_OUPUT_PDFA || exit 0

@@ -71,7 +71,7 @@ getImgInfo() {
                 pdfimages -f $page -l $page -j "$FILE_INPUT" "$curOrigImg" 1>&2
                 # count number of extracted images
                 nbImg=$((`ls -1 "$curOrigImg"* 2>/dev/null | wc -l`))
-                if [ $nbImg -ne "1" ]; then
+                if [ "$nbImg" -ne 1 ]; then
                         [ $VERBOSITY -ge $LOG_WARN ] && echo "Page $page: Expecting exactly 1 image covering the whole page (found $nbImg). Cannot compute dpi value."
                         return 2
                 fi
@@ -82,7 +82,7 @@ getImgInfo() {
 
 
 	# Get characteristics of the extracted image
-	curImg=`ls -1 "$curOrigImg"* 2>/dev/null`
+	curImg=`ls -1 "$curOrigImg" 2>/dev/null`
 	propCurImg=`identify -format "%w %h %[colorspace] %[depth] %[resolution.x] %[resolution.y]" "$curImg"`
 	widthCurImg=`echo "$propCurImg" | cut -f1 -d" "`
 	heightCurImg=`echo "$propCurImg" | cut -f2 -d" "`
@@ -116,7 +116,7 @@ getImgInfo() {
 }
 
 # Get the type of file (image or PDF)
-typeFile=`file --mime-type --brief "${FILE_INPUT}" | cut --characters=1-5`
+typeFile=`file --mime-type --brief "${FILE_INPUT}" | cut -d"/" -f1`
 if [ "$typeFile" = "image" ]; then
         typeFile="Image"
 else
@@ -148,17 +148,17 @@ getImgInfo "$page" "$widthFile" "$heightFile" "$curImgInfo" "$typeFile"
 ret_code="$?"
 
 # Handle pages that already contain a text layer
-if [ "$ret_code" -eq "1" ] && [ "$SKIP_TEXT" -eq "1" ]; then
+if [ "$ret_code" -eq 1 ] && [ "$SKIP_TEXT" = "1" ]; then
         echo "Page $page: Skipping processing because page contains text..."
         pdfseparate -f $page -l $page "${FILE_INPUT}" "$curOCRedPDF"
         exit 0
 # In case the page contains text, do not OCR, unless the FORCE_OCR flag is set.
-elif [ "$ret_code" -eq "1" ] && [ "$FORCE_OCR" -eq "0" ]; then
+elif [ "$ret_code" -eq 1 ] && [ "$FORCE_OCR" = "0" ]; then
 	echo "Page $page: Exiting... (Use the -f option to force OCRing, even though fonts are available in the input file)" && exit $EXIT_BAD_INPUT_FILE
-elif [ "$ret_code" -eq "1" ] && [ "$FORCE_OCR" -eq "1" ]; then
+elif [ "$ret_code" -eq 1 ] && [ "$FORCE_OCR" = "1" ]; then
 	[ $VERBOSITY -ge $LOG_WARN ] && echo "Page $page: OCRing anyway, assuming a default resolution of $dpi dpi"
 # in case the page contains more than one image, warn the user but go on with default parameters
-elif [ "$ret_code" -eq "2" ]; then
+elif [ "$ret_code" -eq 2 ]; then
 	[ $VERBOSITY -ge $LOG_WARN ] && echo "Page $page: Continuing anyway, assuming a default resolution of $dpi dpi"
 # Else, this is a normal PDF without any OCR, or a single image file.
 else
@@ -174,7 +174,7 @@ fi
 if [ "$dpi" -lt "$OVERSAMPLING_DPI" ]; then
 	[ $VERBOSITY -ge $LOG_WARN ] && echo "$typeFile $page: Low image resolution detected ($dpi dpi). Performing oversampling ($OVERSAMPLING_DPI dpi) to try to get better OCR results."
 	dpi="$OVERSAMPLING_DPI"
-elif [ "$dpi" -lt "200" ]; then
+elif [ "$dpi" -lt 200 ]; then
 	[ $VERBOSITY -ge $LOG_WARN ] && echo "$typeFile $page: Low image resolution detected ($dpi dpi). If needed, please use the \"-o\" to try to get better OCR results."
 fi
 
@@ -202,7 +202,7 @@ if [ "$typeFile" = "Page" ]; then
         heightCurImg=$(($dpi*$heightFile/72))
 else
         # Avoid a convert process if possible,
-        if [ "$PREPROCESS_DESKEW" -eq "1" ] && [ "$DESKEW_TOOL" != "Leptonica" ]; then
+        if [ "$PREPROCESS_DESKEW" = "1" ] && [ "$DESKEW_TOOL" != "Leptonica" ]; then
                 ln -s "$FILE_INPUT" "$curImgPixmap"
         else
                 ! convert "$FILE_INPUT" "$curImgPixmap" \
@@ -213,7 +213,7 @@ else
 fi
 
 # if requested deskew image (without changing its size in pixel)
-if [ "$PREPROCESS_DESKEW" -eq "1" ]; then
+if [ "$PREPROCESS_DESKEW" = "1" ]; then
 	[ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Deskewing image"
         if [ "$DESKEW_TOOL" = "Leptonica" ]; then
                 ! python2 $SRC/leptonica.py deskew -r $dpi "$curImgPixmap" "$curImgPixmapDeskewed" && echo "Problem file: $curImgPixmap" && exit $?
@@ -230,7 +230,7 @@ else
 fi
 
 # if requested clean image with unpaper to get better OCR results
-if [ "$PREPROCESS_CLEAN" -eq "1" ]; then
+if [ "$PREPROCESS_CLEAN" = "1" ]; then
 	[ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Cleaning image with unpaper"
 	! unpaper --dpi $dpi --mask-scan-size 100 \
 		--no-deskew --no-grayfilter --no-blackfilter --no-mask-center --no-border-align \
@@ -254,7 +254,7 @@ elif [ ! -e "$curHocr" ]; then
 fi
 
 # embed text and image to new pdf file
-if [ "$PREPROCESS_CLEANTOPDF" -eq "1" ]; then
+if [ "$PREPROCESS_CLEANTOPDF" = "1" ]; then
 	image4finalPDF="$curImgPixmapClean"
 else
 	image4finalPDF="$curImgPixmapDeskewed"
@@ -264,7 +264,7 @@ fi
 	&& echo "Could not create PDF file from \"$curHocr\". Exiting..." && exit $EXIT_OTHER_ERROR
 
 # if requested generate special debug PDF page with visible OCR text
-if [ $PDF_NOIMG -eq "1" ] ; then
+if [ "$PDF_NOIMG" = "1" ] ; then
 	[ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Embedding text in PDF (debug page)"
 	! python2 $SRC/hocrTransform.py -b -r $dpi "$curHocr" "$curOCRedPDFDebug" \
 		&& echo "Could not create PDF file from \"$curHocr\". Exiting..." && exit $EXIT_OTHER_ERROR
@@ -272,7 +272,7 @@ fi
 
 # delete temporary files created for the current page
 # to avoid using to much disk space in case of PDF files having many pages
-if [ $KEEP_TMP -eq 0 ]; then
+if [ "$KEEP_TMP" = "0" ]; then
 	rm -f "$curOrigImg"*
 	rm -f "$curHocr"
 	rm -f "$curImgPixmap"
