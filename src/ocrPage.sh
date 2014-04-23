@@ -82,7 +82,7 @@ getImgInfo() {
 
 
 	# Get characteristics of the extracted image
-	curImg=`ls -1 "$curOrigImg" 2>/dev/null`
+	curImg=`ls -1 "$curOrigImg"* 2>/dev/null`
 	propCurImg=`identify -format "%w %h %[colorspace] %[depth] %[resolution.x] %[resolution.y]" "$curImg"`
 	widthCurImg=`echo "$propCurImg" | cut -f1 -d" "`
 	heightCurImg=`echo "$propCurImg" | cut -f2 -d" "`
@@ -97,8 +97,8 @@ getImgInfo() {
                 mime=`file --mime-type --brief "${curImg}" | cut --characters=7-9`
                 if [ "$mime" = "png" ]; then
                         dpi=`echo "scale=10;($dpi*2.54)+0.5" | bc`
-                        dpi=`echo "scale=0;$dpi/1" | bc`
                 fi
+                dpi=`echo "scale=0;$dpi/1" | bc`
         else
                 # compute the resolution of the image (making the assumption that x & y resolution are equal)
                 # and round it to the nearest integer
@@ -129,6 +129,7 @@ page=`echo $PAGE_INFO | cut -f1 -d" "`
 # get width / height of PDF page or image file (in pt)
 widthFile=`echo $PAGE_INFO | cut -f2 -d" "`
 heightFile=`echo $PAGE_INFO | cut -f3 -d" "`
+hocrFile="`echo $PAGE_INFO | cut -f4- -d" "`"
 
 # create the name of the required temporary files
 curOrigImg="$TMP_FLD/${page}.orig-img"				# original image available in the current PDF page
@@ -140,15 +141,21 @@ curImgInfo="$TMP_FLD/${page}.orig-img-info.txt"			# Detected characteristics of 
 
 
 # Detect the characteristics of the embedded page or the image.
-depthCurImg="8"			# default color depth
-colorspaceCurImg="sRGB"		# default color space
-dpi=$DEFAULT_DPI		# default resolution
+dpi=`echo "scale=0;$DEFAULT_DPI/1" | bc`                        # default resolution
+colorspaceCurImg="sRGB"                                         # default color space
+depthCurImg="8"                                                 # default color depth
 
 getImgInfo "$page" "$widthFile" "$heightFile" "$curImgInfo" "$typeFile"
 ret_code="$?"
 
+[ $VERBOSITY -ge $LOG_DEBUG ] && [ -z "$hocrFile" ] && echo "$typeFile $page: width $widthFile, height $heightFile"
+[ $VERBOSITY -ge $LOG_DEBUG ] && [ ! -z "$hocrFile" ] && echo "$typeFile $page: width $widthFile, height $heightFile (hocr file $hocrFile)"
+
+# In case there is an hocr file, do not OCR.
+if [ ! -z "$hocrFile" ]; then
+        [ $VERBOSITY -ge $LOG_WARN ] && echo "$typeFile $page: Using hocr file, assuming a default resolution of $dpi dpi"
 # Handle pages that already contain a text layer
-if [ "$ret_code" -eq 1 ] && [ "$SKIP_TEXT" = "1" ]; then
+elif [ "$ret_code" -eq 1 ] && [ "$SKIP_TEXT" = "1" ]; then
         echo "Page $page: Skipping processing because page contains text..."
         pdfseparate -f $page -l $page "${FILE_INPUT}" "$curOCRedPDF"
         exit 0
@@ -156,16 +163,17 @@ if [ "$ret_code" -eq 1 ] && [ "$SKIP_TEXT" = "1" ]; then
 elif [ "$ret_code" -eq 1 ] && [ "$FORCE_OCR" = "0" ]; then
 	echo "Page $page: Exiting... (Use the -f option to force OCRing, even though fonts are available in the input file)" && exit $EXIT_BAD_INPUT_FILE
 elif [ "$ret_code" -eq 1 ] && [ "$FORCE_OCR" = "1" ]; then
-	[ $VERBOSITY -ge $LOG_WARN ] && echo "Page $page: OCRing anyway, assuming a default resolution of $dpi dpi"
+        [ $VERBOSITY -ge $LOG_WARN ] && echo "Page $page: OCRing anyway, assuming a default resolution of $dpi dpi"
 # in case the page contains more than one image, warn the user but go on with default parameters
 elif [ "$ret_code" -eq 2 ]; then
 	[ $VERBOSITY -ge $LOG_WARN ] && echo "Page $page: Continuing anyway, assuming a default resolution of $dpi dpi"
-# Else, this is a normal PDF without any OCR, or a single image file.
+# Else, this is a normal PDF without any OCR, or a single image file, with or without hocr.
 else
+        [ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Continuing process with a normal page."
 	# read the image characteristics from the file
-	dpi=`cat "$curImgInfo" | grep "^DPI=" | cut -f2 -d"="`
-	colorspaceCurImg=`cat "$curImgInfo" | grep "^COLOR_SPACE=" | cut -f2 -d"="`
-	depthCurImg=`cat "$curImgInfo" | grep "^DEPTH=" | cut -f2 -d"="`
+        dpi=`cat "$curImgInfo" | grep "^DPI=" | cut -f2 -d"="`
+        colorspaceCurImg=`cat "$curImgInfo" | grep "^COLOR_SPACE=" | cut -f2 -d"="`
+        depthCurImg=`cat "$curImgInfo" | grep "^DEPTH=" | cut -f2 -d"="`
 fi
 
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: $dpi dpi, colorspace $colorspaceCurImg, depthCurImg $depthCurImg"
@@ -240,17 +248,22 @@ else
 	ln -s `basename "$curImgPixmapDeskewed"` "$curImgPixmapClean"
 fi
 
-# perform OCR
-[ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Performing OCR"
-! tesseract -l "$LANGUAGE" "$curImgPixmapClean" "$curHocr" hocr $TESS_CFG_FILES 1> /dev/null 2> /dev/null \
-	&& echo "Could not OCR file \"$curImgPixmapClean\". Exiting..." && exit $EXIT_OTHER_ERROR
-# Tesseract names the output files differently in some distributions.
-if [ -e "$curHocr.html" ]; then
-        mv "$curHocr.html" "$curHocr"
-elif [ -e "$curHocr.hocr" ]; then
-        mv "$curHocr.hocr" "$curHocr"
-elif [ ! -e "$curHocr" ]; then
-        echo "\"$curHocr[.html|.hocr]\" not found. Exiting..." && exit $EXIT_OTHER_ERROR
+# perform OCR if needed (without hocr file).
+if [ -z "$hocrFile" ]; then
+        [ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Performing OCR"
+        ! tesseract -l "$LANGUAGE" "$curImgPixmapClean" "$curHocr" hocr $TESS_CFG_FILES 1> /dev/null 2> /dev/null \
+                && echo "Could not OCR file \"$curImgPixmapClean\". Exiting..." && exit $EXIT_OTHER_ERROR
+        # Tesseract names the output files differently in some distributions.
+        if [ -e "$curHocr.html" ]; then
+                mv "$curHocr.html" "$curHocr"
+        elif [ -e "$curHocr.hocr" ]; then
+                mv "$curHocr.hocr" "$curHocr"
+        elif [ ! -e "$curHocr" ]; then
+                echo "\"$curHocr[.html|.hocr]\" not found. Exiting..." && exit $EXIT_OTHER_ERROR
+        fi
+else
+        [ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Using existing HOCR file"
+        ln -s "$hocrFile" "$curHocr"
 fi
 
 # embed text and image to new pdf file

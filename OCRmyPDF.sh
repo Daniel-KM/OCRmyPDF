@@ -23,7 +23,7 @@ Copyright: fritz-hh  from Github (https://github.com/fritz-hh)
 Version: $VERSION
 
 Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-l language] [-j jobs] [-C filename] inputfile outputfile
-       OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-l language] [-j jobs] [-C filename] -a -p outputfile inputfiles
+       OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-l language] [-j jobs] [-C filename] [-a] [-r] -p outputfile inputfiles
 
 -h : Display this help message
 -v : Increase the verbosity (this option can be used more than once) (e.g. -vvv)
@@ -51,11 +51,14 @@ Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-l la
 -a : Use a list of images as input instead of a pdf file. In that case, the
      input should be a list of file or a string to be expanded by shell like "image_*.ext"
      and the output should be set with the -o option.
--p : Output file (required with -a, else forbidden)
+-r : Use an OCR already completed instead of processing a new OCR. In that case,
+     the input should be one or a list of hocr files. It implies the  -p option.
+-p : Output file (required with -a or -r, else forbidden)
 -C : Pass an additional configuration file to the tesseract OCR engine.
      (this option can be used more than once)
      Note 1: The configuration file must be available in the "tessdata/configs" folder of your tesseract installation
-inputfile  : PDF file (or list of images when -a is used) to be OCRed
+inputfile  : PDF file to be OCRed (or list of images when -a is used, or list of
+     hocr files when -r is used)
 outputfile : The PDF/A file that will be generated (except if -p is used)
 --------------------------------------------------------------------------------------
 EOF
@@ -92,12 +95,13 @@ PDF_NOIMG="0"			# 0=no, 1=yes (generates each PDF page twice, with and without i
 FORCE_OCR="0"			# 0=do not force, 1=force (force to OCR the whole document, even if some page already contain font data)
 SKIP_TEXT="0"			# 0=do not skip text pages, 1=skip text pages
 USE_IMAGES="0"                  # 0=no, 1=yes (use existing images)
+USE_HOCR="0"                    # 0=no, 1=yes (use existing hocr files)
 TESS_CFG_FILES=""		# list of additional configuration files to be used by tesseract
 JOBS=""                         # Parameter for parallel jobs
 FILE_OUTPUT_PDFA=""             # Output file
 
 # Parse optional command line arguments
-while getopts ":hvgkdcio:fsl:j:ap:C:" opt; do
+while getopts ":hvgkdcio:fsl:j:arp:C:" opt; do
 	case $opt in
 		h) usage ; exit 0 ;;
 		v) VERBOSITY=$(($VERBOSITY+1)) ;;
@@ -112,6 +116,7 @@ while getopts ":hvgkdcio:fsl:j:ap:C:" opt; do
 		l) LANGUAGE="$OPTARG" ;;
 		j) JOBS="--jobs $OPTARG" ;;
                 a) USE_IMAGES="1" ;;
+                r) USE_HOCR="1" ;;
                 p) FILE_OUTPUT_PDFA="$OPTARG" ;;
 		C) TESS_CFG_FILES="$OPTARG $TESS_CFG_FILES" ;;
 		\?)
@@ -125,20 +130,31 @@ while getopts ":hvgkdcio:fsl:j:ap:C:" opt; do
 	esac
 done
 
-# Check force and skip options.
-if [ "$SKIP_TEXT" = "1" -a "$FORCE_OCR" = "1" ]; then
+# Check skip and force ocr options.
+if [ "$SKIP_TEXT" = "1" ] &&  [ "$FORCE_OCR" = "1" ]; then
         echo "Options -f and -s are mutually exclusive; choose one or the other"
         usage
         exit $EXIT_BAD_ARGS
 fi
 
-# Check -a and -p options.
-if [ "$USE_IMAGES" = "0" ] && [ -n "$FILE_OUTPUT_PDFA" ]; then
-        echo "Option -p cannot be used without the option -a."
+# Check use ocr and force ocr options.
+if [ "$USE_HOCR" = "1" ] && [ "$FORCE_OCR" = "1" ]; then
+        echo "Options -f and -r are mutually exclusive; choose one or the other"
+        usage
+        exit $EXIT_BAD_ARGS
+fi
+
+# Check -a, -r and -p options.
+if [ -n "$FILE_OUTPUT_PDFA" ] && [ "$USE_IMAGES" = "0" ] && [ "$USE_HOCR" = "0" ]; then
+        echo "Option -p cannot be used without filepath or without the option -a or -r."
         usage
         exit $EXIT_BAD_ARGS
 elif [ "$USE_IMAGES" = "1" ] && [ -z "$FILE_OUTPUT_PDFA" ]; then
         echo "Option -p is required when the option -a is used."
+        usage
+        exit $EXIT_BAD_ARGS
+elif [ "$USE_HOCR" = "1" ] && [ -z "$FILE_OUTPUT_PDFA" ]; then
+        echo "Option -p is required when the option -r is used."
         usage
         exit $EXIT_BAD_ARGS
 fi
@@ -147,7 +163,7 @@ fi
 shift $((OPTIND-1))
 
 # Check if the number of mandatory parameters provided is as expected
-if [ "$USE_IMAGES" = "0" ] && [ "$#" -ne 2 ]; then
+if [ "$USE_IMAGES" = "0" ] && [ "$USE_HOCR" = "0" ] && [ "$#" -ne 2 ]; then
         echo "Exactly two mandatory arguments (input and output files) shall be provided ($# arguments provided)."
         usage
         exit $EXIT_BAD_ARGS
@@ -155,10 +171,14 @@ elif [ "$USE_IMAGES" = "1" ] && [ "$#" -lt 1 ]; then
         echo "When using images files, the list of files should be provided."
         usage
         exit $EXIT_BAD_ARGS
+elif [ "$USE_HOCR" = "1" ] && [ "$#" -lt 1 ]; then
+        echo "When using hocr files, the list of files should be provided."
+        usage
+        exit $EXIT_BAD_ARGS
 fi
 
 # Check files and get absolute paths.
-if [ "$USE_IMAGES" = "0" ]; then
+if [ "$USE_IMAGES" = "0" ] && [ "$USE_HOCR" = "0" ]; then
         if [ ! -f "$1" ]; then
                 echo "The input file does not exist. Exiting..." && exit $EXIT_BAD_ARGS
         fi
@@ -169,20 +189,32 @@ if [ "$USE_IMAGES" = "0" ]; then
                 && echo "The folder in which the output file should be generated does not exist. Exiting..." && exit $EXIT_BAD_ARGS
         FILE_OUTPUT_PDFA="`absolutePath "$2"`"
 else
-        for image in "${@}"; do
-                if [ ! -f "$image" ]; then
-                        echo "The input file '$image' does not exist. Exiting..." && exit $EXIT_BAD_ARGS
+        # Check the list of files.
+        for inputFile in "${@}"; do
+                if [ ! -f "$inputFile" ]; then
+                        echo "The input file '$inputFile' does not exist. Exiting..." && exit $EXIT_BAD_ARGS
                 fi
-                ! absolutePath "$image" > /dev/null \
+                ! absolutePath "$inputFile" > /dev/null \
                         && echo "The folder in which input files should be generated does not exist. Exiting..." && exit $EXIT_BAD_ARGS
         done
 
-        FILE_INPUT_PDF=""
+        # Check if there are images and hocr files or only one of them.
+        if [ "$USE_IMAGES" = "1" ] && [ "$USE_HOCR" = "1" ]; then
+                [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Using a list of images and hocr files."
+        elif [ "$USE_IMAGES" = "1" ]; then
+                [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Using a list of images files."
+        elif [ "$USE_HOCR" = "1" ]; then
+                [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Using a list of hocr files."
+        else
+                echo "Error in input files. Exiting..." && exit $EXIT_BAD_ARGS
+        fi
+
         ! absolutePath "$FILE_OUTPUT_PDFA" > /dev/null \
                 && echo "The folder in which the output file should be generated does not exist. Exiting..." && exit $EXIT_BAD_ARGS
         FILE_OUTPUT_PDFA="`absolutePath "$FILE_OUTPUT_PDFA"`"
 
-        [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Using a list of images."
+        # Distinction between PDF file, images and hocr files is made later.
+        FILE_INPUT_PDF=""
 fi
 
 # Check existing file.
@@ -204,7 +236,7 @@ cd "`dirname $0`"
 ! command -v pdftoppm > /dev/null && echo "Please install poppler-utils with the option --enable-splash-output enabled. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
 ! command -v pdfseparate > /dev/null && echo "Please install or update poppler-utils to at least 0.24.5. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
 [ "$PREPROCESS_CLEAN" = "1" ] && ! command -v unpaper > /dev/null && echo "Please install unpaper. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
-! command -v tesseract > /dev/null && echo "Please install tesseract and tesseract-data. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
+[ "$USE_HOCR" = "0" ] && ! command -v tesseract > /dev/null && echo "Please install tesseract and tesseract-data. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
 ! command -v python2 > /dev/null && echo "Please install python v2.x. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
 ! python2 -c 'import lxml' 2>/dev/null && echo "Please install the python library lxml. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
 ! python2 -c 'import reportlab' 2>/dev/null && echo "Please install the python library reportlab. Exiting..." && exit $EXIT_MISSING_DEPENDENCY
@@ -248,12 +280,16 @@ if [ $VERBOSITY -ge $LOG_DEBUG ]; then
 	pdftoppm -v
 	pdffonts -v
 	pdfseparate -v
-	echo "--------------------------------"
-	echo "unpaper version:"
-	unpaper --version
-	echo "--------------------------------"
-	echo "tesseract version:"
-	tesseract --version
+        if [ "$PREPROCESS_CLEAN" = "1" ]; then
+            echo "--------------------------------"
+            echo "unpaper version:"
+            unpaper --version
+	fi
+	if [ "$USE_HOCR" = "0" ]; then
+            echo "--------------------------------"
+            echo "tesseract version:"
+            tesseract --version
+        fi
 	echo "--------------------------------"
 	echo "python2 version:"
 	python2 --version
@@ -300,10 +336,70 @@ fi
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Created temporary folder: \"$TMP_FLD\""
 
 FILE_TMP="${TMP_FLD}/tmp.txt"						# temporary file with a very short lifetime (may be used for several things)
-FILE_INPUT_FILES="${TMP_FLD}/input-files.txt"                           # temporary file for full filenames
-FILE_PAGES_INFO="${TMP_FLD}/pages-info.txt"				# for each page: page #; width in pt; height in pt
+FILE_INPUT_FILES="${TMP_FLD}/input-files.txt"                           # temporary file for full filenames of files
+FILE_INPUT_HOCR="${TMP_FLD}/input-files-hocr.txt"                       # temporary file for full filenames of hocr files
+FILE_PAGES_INFO="${TMP_FLD}/pages-info.txt"				# for each page: page #; width in pt; height in pt; hocr file if any
 FILE_VALIDATION_LOG="${TMP_FLD}/pdf_validation.log"			# log file containing the results of the validation of the PDF/A file
 
+# In case of multiple input files, get pdf file of list of images and hocr files if any.
+if [ "$USE_IMAGES" = "1" ] || [ "$USE_HOCR" = "1" ]; then
+        touch "$FILE_INPUT_FILES"
+        touch "$FILE_INPUT_HOCR"
+        # To get full path of images, we need to go back original path.
+        cd "$CURRENT_PATH"
+        for inputFile in "${@}"; do
+                input="`absolutePath "$inputFile"`"
+                type="$(file --brief "$input" | cut -d' ' -f1)"
+                typeFile=`file --mime-type --brief "$input" | cut -d"/" -f1`
+                if [ "$USE_HOCR" = "1" ] && [ "$type" = "XML" ]; then
+                        echo "$input" >> "$FILE_INPUT_HOCR"
+                elif [ "$USE_IMAGES" = "1" ] && [ "$typeFile" = "image" ]; then
+                        echo "$input" >> "$FILE_INPUT_FILES"
+                elif [ "$USE_IMAGES" = "0" ] && [ "$type" = "PDF" ]; then
+                        if  [ -z "$FILE_INPUT_PDF" ]; then
+                                FILE_INPUT_PDF="$input"
+                        else
+                                echo "There are two or more pdf files as input (\"$FILE_INPUT_PDF\" and \"$input\"). Exiting." && exit $EXIT_BAD_INPUT_FILE
+                        fi
+                else
+                        echo "The file \"$input\" is not recognized (type $type). Exiting." && exit $EXIT_BAD_INPUT_FILE
+                fi
+        done
+        cd "`dirname $0`"
+
+        # To keep input alphabetically.
+        sort "$FILE_INPUT_FILES" -o "$FILE_INPUT_FILES"
+        sort "$FILE_INPUT_HOCR" -o "$FILE_INPUT_HOCR"
+
+        # Check input files.
+        totalFiles=`wc -l < "$FILE_INPUT_FILES"`
+        if [ "$USE_IMAGES" = "0" ] && [ "$totalFiles" -ne 0 ]; then
+                echo "Error in list of files. See \"$FILE_INPUT_FILES\". Exiting." && exit $EXIT_BAD_INPUT_FILE
+        fi
+        if [ "$USE_IMAGES" = "1" ] && [ "$totalFiles" -eq 0 ]; then
+                echo "No image file found. Exiting." && exit $EXIT_BAD_INPUT_FILE
+        fi
+
+        totalHocr=`wc -l < "$FILE_INPUT_HOCR"`
+        if [ "$USE_HOCR" = "0" ] && [ "$totalHocr" -ne 0 ]; then
+                echo "Error in list of files. See \"$FILE_INPUT_HOCR\". Exiting." && exit $EXIT_BAD_INPUT_FILE
+        fi
+        if [ "$USE_HOCR" = "1" ] && [ "$totalHocr" -eq 0 ]; then
+                echo "No hocr file found. Exiting." && exit $EXIT_BAD_INPUT_FILE
+        fi
+
+        if [ "$USE_IMAGES" = "0" ] && [ -z "$FILE_INPUT_PDF" ] ; then
+                echo "No pdf file found. Exiting." && exit $EXIT_BAD_INPUT_FILE
+        fi
+
+        [ $VERBOSITY -ge $LOG_DEBUG ] && [ "$USE_IMAGES" = "1" ] && echo "Total images files: $totalFiles"
+        [ $VERBOSITY -ge $LOG_DEBUG ] && [ "$USE_HOCR" = "1" ] && echo "Total hocr files: $totalHocr"
+
+# Use only a pdf as input.
+else
+        totalFiles=0
+        totalHocr=0
+fi
 
 # get the size of each pdf page (width / height) in pt (i.e. inch/72)
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Input file: Extracting size of each page (in pt)"
@@ -317,6 +413,18 @@ if [ "$USE_IMAGES" = "0" ]; then
         # Calculate the total number of pages.
         totalPages=`tail -n 1 "$FILE_PAGES_INFO" | cut -f1 -d" "`
 
+        # Add hocr files if any.
+        if [ "$USE_HOCR" = "1" ]; then
+                # Check if the number of pages is the same than the number of hocr files.
+                if [ "$totalPages" -ne "$totalHocr" ]; then
+                        echo "Number of pages ($totalPages) is different from the number of hocr files ($totalHocr). Exiting..." && exit $EXIT_BAD_ARGS
+                fi
+
+                # Concatenate files by line.
+                paste -d' ' "$FILE_PAGES_INFO" "$FILE_INPUT_HOCR" > "$FILE_TMP"
+                cp --force "$FILE_TMP" "$FILE_PAGES_INFO"
+        fi
+
         # process each page of the input pdf file
         parallel --progress --eta --gnu --no-notice --quote --keep-order $JOBS --halt-on-error 1 "$OCR_PAGE" "$FILE_INPUT_PDF" "{}" "$totalPages" "$TMP_FLD" \
                 "$VERBOSITY" "$LANGUAGE" "$KEEP_TMP" "$PREPROCESS_DESKEW" "$PREPROCESS_CLEAN" "$PREPROCESS_CLEANTOPDF" "$OVERSAMPLING_DPI" \
@@ -324,15 +432,7 @@ if [ "$USE_IMAGES" = "0" ]; then
         ret_code="$?"
         [ "$ret_code" -ne 0 ] && exit $ret_code
 else
-        touch $FILE_INPUT_FILES
-        # To get full path of images, we need to go back original path.
-        cd "$CURRENT_PATH"
-        for image in "${@}"; do
-                echo `absolutePath "$image"` >> "$FILE_INPUT_FILES"
-        done
-        cd "`dirname $0`"
-
-        parallel --progress --eta --gnu --keep-order $JOBS --halt-on-error 1 --no-run-if-empty 'identify -format "%w %h"' "{}" :::: "$FILE_INPUT_FILES" > "$FILE_TMP"
+        parallel --progress --eta --gnu --keep-order $JOBS --halt-on-error 1 --no-run-if-empty identify -format '"%w %h\n"' "{}" :::: "$FILE_INPUT_FILES" > "$FILE_TMP"
         ret_code="$?"
         [ "$ret_code" -ne 0 ] && exit $ret_code
 
@@ -341,6 +441,18 @@ else
 
         # Calculate the total number of pages.
         totalPages=`tail -n 1 "$FILE_PAGES_INFO" | cut -f1 -d" "`
+
+        # Add hocr files if any.
+        if [ "$USE_HOCR" = "1" ]; then
+                # Check if the number of pages is the same than the number of hocr files.
+                if [ "$totalPages" -ne "$totalHocr" ]; then
+                        echo "Number of pages is different from the number of hocr files. Exiting..." && exit $EXIT_BAD_ARGS
+                fi
+
+                # Concatenate files by line.
+                paste -d' ' "$FILE_PAGES_INFO" "$FILE_INPUT_HOCR" > "$FILE_TMP"
+                cp --force "$FILE_TMP" "$FILE_PAGES_INFO"
+        fi
 
         # process each page of the input pdf file
         parallel --progress --eta --gnu --no-notice --quote --keep-order $JOBS --halt-on-error 1 --xapply "$OCR_PAGE" "{1}" "{2}" "$totalPages" "$TMP_FLD" \
