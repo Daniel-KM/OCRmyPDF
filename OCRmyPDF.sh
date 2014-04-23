@@ -22,8 +22,8 @@ tesseract engine)
 Copyright: fritz-hh  from Github (https://github.com/fritz-hh)
 Version: $VERSION
 
-Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-l language] [-j jobs] [-C filename] inputfile outputfile
-       OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-l language] [-j jobs] [-C filename] [-a] [-r] -p outputfile inputfiles
+Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-x] [-l language] [-j jobs] [-C filename] input output
+       OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-x] [-l language] [-j jobs] [-C filename] [-a] [-r] -p output input
 
 -h : Display this help message
 -v : Increase the verbosity (this option can be used more than once) (e.g. -vvv)
@@ -44,6 +44,7 @@ Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-l la
      to raster format and then fed through OCR.
      (which should not be the case for PDF files built from scanned images)
 -s : If pages contain font data, do not perform processing on that page, but include the page in the final output.
+-x : Only extract OCR (create one hocr file by page in the output folder)
 -l : Set the language of the PDF file in order to improve OCR results (default "eng")
      Any language supported by tesseract is supported (Tesseract uses 3-character ISO 639-2 language codes)
      Multiple languages may be specified, separated by '+' characters.
@@ -57,9 +58,10 @@ Usage: OCRmyPDF.sh  [-h] [-v] [-g] [-k] [-d] [-c] [-i] [-o dpi] [-f] [-s] [-l la
 -C : Pass an additional configuration file to the tesseract OCR engine.
      (this option can be used more than once)
      Note 1: The configuration file must be available in the "tessdata/configs" folder of your tesseract installation
-inputfile  : PDF file to be OCRed (or list of images when -a is used, or list of
+input  : PDF file to be OCRed (or list of images when -a is used, or list of
      hocr files when -r is used)
-outputfile : The PDF/A file that will be generated (except if -p is used)
+output : The PDF/A file that will be generated (except if -p is used) or the
+     output folder wherer hocr files will be stored (-x)
 --------------------------------------------------------------------------------------
 EOF
 }
@@ -94,14 +96,15 @@ OVERSAMPLING_DPI="0"		# 0=do not perform oversampling (dpi value under which ove
 PDF_NOIMG="0"			# 0=no, 1=yes (generates each PDF page twice, with and without image)
 FORCE_OCR="0"			# 0=do not force, 1=force (force to OCR the whole document, even if some page already contain font data)
 SKIP_TEXT="0"			# 0=do not skip text pages, 1=skip text pages
+EXTRACT_HOCR_ONLY="0"           # 0=no, 1=yes (only extract ocr into hocr files)
 USE_IMAGES="0"                  # 0=no, 1=yes (use existing images)
 USE_HOCR="0"                    # 0=no, 1=yes (use existing hocr files)
 TESS_CFG_FILES=""		# list of additional configuration files to be used by tesseract
 JOBS=""                         # Parameter for parallel jobs
-FILE_OUTPUT_PDFA=""             # Output file
+OUTPUT_PATH=""                  # Output path (pdf file or folder for hocr files)
 
 # Parse optional command line arguments
-while getopts ":hvgkdcio:fsl:j:arp:C:" opt; do
+while getopts ":hvgkdcio:fsxl:j:arp:C:" opt; do
 	case $opt in
 		h) usage ; exit 0 ;;
 		v) VERBOSITY=$(($VERBOSITY+1)) ;;
@@ -113,11 +116,12 @@ while getopts ":hvgkdcio:fsl:j:arp:C:" opt; do
 		o) OVERSAMPLING_DPI="$OPTARG" ;;
 		f) FORCE_OCR="1" ;;
 		s) SKIP_TEXT="1" ;;
+                x) EXTRACT_HOCR_ONLY="1"; FORCE_OCR="1" ;;
 		l) LANGUAGE="$OPTARG" ;;
 		j) JOBS="--jobs $OPTARG" ;;
                 a) USE_IMAGES="1" ;;
                 r) USE_HOCR="1" ;;
-                p) FILE_OUTPUT_PDFA="$OPTARG" ;;
+                p) OUTPUT_PATH="$OPTARG" ;;
 		C) TESS_CFG_FILES="$OPTARG $TESS_CFG_FILES" ;;
 		\?)
 			echo "Invalid option: -$OPTARG"
@@ -145,16 +149,29 @@ if [ "$USE_HOCR" = "1" ] && [ "$FORCE_OCR" = "1" ]; then
 fi
 
 # Check -a, -r and -p options.
-if [ -n "$FILE_OUTPUT_PDFA" ] && [ "$USE_IMAGES" = "0" ] && [ "$USE_HOCR" = "0" ]; then
+if [ -n "$OUTPUT_PATH" ] && [ "$USE_IMAGES" = "0" ] && [ "$USE_HOCR" = "0" ]; then
         echo "Option -p cannot be used without filepath or without the option -a or -r."
         usage
         exit $EXIT_BAD_ARGS
-elif [ "$USE_IMAGES" = "1" ] && [ -z "$FILE_OUTPUT_PDFA" ]; then
+elif [ "$USE_IMAGES" = "1" ] && [ -z "$OUTPUT_PATH" ]; then
         echo "Option -p is required when the option -a is used."
         usage
         exit $EXIT_BAD_ARGS
-elif [ "$USE_HOCR" = "1" ] && [ -z "$FILE_OUTPUT_PDFA" ]; then
+elif [ "$USE_HOCR" = "1" ] && [ -z "$OUTPUT_PATH" ]; then
         echo "Option -p is required when the option -r is used."
+        usage
+        exit $EXIT_BAD_ARGS
+fi
+
+# Check extract / use hocr ocr files.
+if [ "$EXTRACT_HOCR_ONLY" = "1" ] && [ "$USE_OCR" = "1" ]; then
+        echo "Currently, options -x and -r are mutually exclusive; choose one or the other."
+        usage
+        exit $EXIT_BAD_ARGS
+fi
+# Check extract hocr / skip ocrised files.
+if [ "$EXTRACT_HOCR_ONLY" = "1" ] && [ "$SKIP_TEXT" = "1" ]; then
+        echo "Options -x and -s are mutually exclusive; choose one or the other."
         usage
         exit $EXIT_BAD_ARGS
 fi
@@ -185,9 +202,10 @@ if [ "$USE_IMAGES" = "0" ] && [ "$USE_HOCR" = "0" ]; then
         ! absolutePath "$1" > /dev/null \
                 && echo "The folder in which the input file should be located does not exist. Exiting..." && exit $EXIT_BAD_ARGS
         FILE_INPUT_PDF="`absolutePath "$1"`"
+
         ! absolutePath "$2" > /dev/null \
-                && echo "The folder in which the output file should be generated does not exist. Exiting..." && exit $EXIT_BAD_ARGS
-        FILE_OUTPUT_PDFA="`absolutePath "$2"`"
+                && echo "The folder in which the output files should be generated does not exist. Exiting..." && exit $EXIT_BAD_ARGS
+        OUTPUT_PATH="`absolutePath "$2"`"
 else
         # Check the list of files.
         for inputFile in "${@}"; do
@@ -209,16 +227,16 @@ else
                 echo "Error in input files. Exiting..." && exit $EXIT_BAD_ARGS
         fi
 
-        ! absolutePath "$FILE_OUTPUT_PDFA" > /dev/null \
+        ! absolutePath "$OUTPUT_PATH" > /dev/null \
                 && echo "The folder in which the output file should be generated does not exist. Exiting..." && exit $EXIT_BAD_ARGS
-        FILE_OUTPUT_PDFA="`absolutePath "$FILE_OUTPUT_PDFA"`"
+        OUTPUT_PATH="`absolutePath "$OUTPUT_PATH"`"
 
         # Distinction between PDF file, images and hocr files is made later.
         FILE_INPUT_PDF=""
 fi
 
 # Check existing file.
-[ -e "$FILE_OUTPUT_PDFA" ] && echo "The output file already exists. Exiting..." && exit 0
+[ "$EXTRACT_HOCR_ONLY" = "0" ] && [ -e "$OUTPUT_PATH" ] && echo "The output file already exists. Exiting..." && exit 0
 
 # Get current path and set script path as working directory.
 CURRENT_PATH="`pwd`"
@@ -336,8 +354,8 @@ fi
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Created temporary folder: \"$TMP_FLD\""
 
 FILE_TMP="${TMP_FLD}/tmp.txt"						# temporary file with a very short lifetime (may be used for several things)
-FILE_INPUT_FILES="${TMP_FLD}/input-files.txt"                           # temporary file for full filenames of files
-FILE_INPUT_HOCR="${TMP_FLD}/input-files-hocr.txt"                       # temporary file for full filenames of hocr files
+FILE_INPUT_FILES="${TMP_FLD}/input-files.txt"                           # temporary file for full filenames of files, if any
+FILE_INPUT_HOCR="${TMP_FLD}/input-files-hocr.txt"                       # temporary file for full filenames of hocr files, if any
 FILE_PAGES_INFO="${TMP_FLD}/pages-info.txt"				# for each page: page #; width in pt; height in pt; hocr file if any
 FILE_VALIDATION_LOG="${TMP_FLD}/pdf_validation.log"			# log file containing the results of the validation of the PDF/A file
 
@@ -367,7 +385,7 @@ if [ "$USE_IMAGES" = "1" ] || [ "$USE_HOCR" = "1" ]; then
         done
         cd "`dirname $0`"
 
-        # To keep input alphabetically.
+        # To keep input alphabetically.
         sort "$FILE_INPUT_FILES" -o "$FILE_INPUT_FILES"
         sort "$FILE_INPUT_HOCR" -o "$FILE_INPUT_HOCR"
 
@@ -426,13 +444,13 @@ if [ "$USE_IMAGES" = "0" ]; then
         fi
 
         # process each page of the input pdf file
-        parallel --progress --eta --gnu --no-notice --quote --keep-order $JOBS --halt-on-error 1 "$OCR_PAGE" "$FILE_INPUT_PDF" "{}" "$totalPages" "$TMP_FLD" \
+        parallel --progress --gnu --no-notice --quote --keep-order $JOBS --halt-on-error 1 "$OCR_PAGE" "$FILE_INPUT_PDF" "{}" "$totalPages" "$TMP_FLD" \
                 "$VERBOSITY" "$LANGUAGE" "$KEEP_TMP" "$PREPROCESS_DESKEW" "$PREPROCESS_CLEAN" "$PREPROCESS_CLEANTOPDF" "$OVERSAMPLING_DPI" \
-                "$PDF_NOIMG" "$TESS_CFG_FILES" "$FORCE_OCR" "$SKIP_TEXT" :::: "$FILE_PAGES_INFO"
+                "$PDF_NOIMG" "$TESS_CFG_FILES" "$FORCE_OCR" "$SKIP_TEXT" "$EXTRACT_HOCR_ONLY" :::: "$FILE_PAGES_INFO"
         ret_code="$?"
         [ "$ret_code" -ne 0 ] && exit $ret_code
 else
-        parallel --progress --eta --gnu --keep-order $JOBS --halt-on-error 1 --no-run-if-empty identify -format '"%w %h\n"' "{}" :::: "$FILE_INPUT_FILES" > "$FILE_TMP"
+        parallel --progress --gnu --keep-order $JOBS --halt-on-error 1 --no-run-if-empty identify -format '"%w %h\n"' "{}" :::: "$FILE_INPUT_FILES" > "$FILE_TMP"
         ret_code="$?"
         [ "$ret_code" -ne 0 ] && exit $ret_code
 
@@ -455,36 +473,42 @@ else
         fi
 
         # process each page of the input pdf file
-        parallel --progress --eta --gnu --no-notice --quote --keep-order $JOBS --halt-on-error 1 --xapply "$OCR_PAGE" "{1}" "{2}" "$totalPages" "$TMP_FLD" \
+        parallel --progress --gnu --no-notice --quote --keep-order $JOBS --halt-on-error 1 --xapply "$OCR_PAGE" "{1}" "{2}" "$totalPages" "$TMP_FLD" \
                 "$VERBOSITY" "$LANGUAGE" "$KEEP_TMP" "$PREPROCESS_DESKEW" "$PREPROCESS_CLEAN" "$PREPROCESS_CLEANTOPDF" "$OVERSAMPLING_DPI" \
-                "$PDF_NOIMG" "$TESS_CFG_FILES" "$FORCE_OCR" "$SKIP_TEXT" :::: "$FILE_INPUT_FILES" :::: "$FILE_PAGES_INFO"
+                "$PDF_NOIMG" "$TESS_CFG_FILES" "$FORCE_OCR" "$SKIP_TEXT" "$EXTRACT_HOCR_ONLY" :::: "$FILE_INPUT_FILES" :::: "$FILE_PAGES_INFO"
         ret_code="$?"
         [ "$ret_code" -ne 0 ] && exit $ret_code
 fi
 
 
 
+# Move hocr files in output folder if needed.
+if [ "$EXTRACT_HOCR_ONLY" = "1" ]; then
+        [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Output file: Moving all hocr files into output folder"
+        find "${TMP_FLD}" -type f -name "*.hocr.xml" -exec mv --backup "{}" "$OUTPUT_PATH" \;
+
 # concatenate all pages and convert the pdf file to match PDF/A format
-[ $VERBOSITY -ge $LOG_DEBUG ] && echo "Output file: Concatenating all pages to the final PDF/A file"
-! gs -dQUIET -dPDFA -dBATCH -dNOPAUSE -dUseCIEColor \
-	-sProcessColorModel=DeviceCMYK -sDEVICE=pdfwrite -sPDFACompatibilityPolicy=2 \
-	-sOutputFile="$FILE_OUTPUT_PDFA" "${TMP_FLD}/"*ocred*.pdf 1> /dev/null 2> /dev/null \
-	&& echo "Could not concatenate all pages to the final PDF/A file. Exiting..." && exit $EXIT_OTHER_ERROR
+else
+        [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Output file: Concatenating all pages to the final PDF/A file"
+        ! gs -dQUIET -dPDFA -dBATCH -dNOPAUSE -dUseCIEColor \
+                -sProcessColorModel=DeviceCMYK -sDEVICE=pdfwrite -sPDFACompatibilityPolicy=2 \
+                -sOutputFile="$OUTPUT_PATH" "${TMP_FLD}/"*ocred*.pdf 1> /dev/null 2> /dev/null \
+                && echo "Could not concatenate all pages to the final PDF/A file. Exiting..." && exit $EXIT_OTHER_ERROR
 
-# validate generated pdf file (compliance to PDF/A)
-[ $VERBOSITY -ge $LOG_DEBUG ] && echo "Output file: Checking compliance to PDF/A standard"
-java -jar "$JHOVE" -c "$JHOVE_CFG" -m PDF-hul "$FILE_OUTPUT_PDFA" > "$FILE_VALIDATION_LOG"
-grep -i "Status|Message" "$FILE_VALIDATION_LOG" # summary of the validation
-[ $VERBOSITY -ge $LOG_DEBUG ] && echo "The full validation log is available here: \"$FILE_VALIDATION_LOG\""
-# check the validation results
-pdf_valid=1
-grep -i 'ErrorMessage' "$FILE_VALIDATION_LOG" && pdf_valid=0
-grep -i 'Status.*not valid' "$FILE_VALIDATION_LOG" && pdf_valid=0
-grep -i 'Status.*Not well-formed' "$FILE_VALIDATION_LOG" && pdf_valid=0
-! grep -i 'Profile:.*PDF/A-1' "$FILE_VALIDATION_LOG" > /dev/null && echo "PDF file profile is not PDF/A-1" && pdf_valid=0
-[ "$pdf_valid" -ne 1 ] && echo "Output file: The generated PDF/A file is INVALID"
-[ "$pdf_valid" -eq 1 ] && [ $VERBOSITY -ge $LOG_INFO ] && echo "Output file: The generated PDF/A file is VALID"
-
+        # validate generated pdf file (compliance to PDF/A)
+        [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Output file: Checking compliance to PDF/A standard"
+        java -jar "$JHOVE" -c "$JHOVE_CFG" -m PDF-hul "$OUTPUT_PATH" > "$FILE_VALIDATION_LOG"
+        grep -i "Status|Message" "$FILE_VALIDATION_LOG" # summary of the validation
+        [ $VERBOSITY -ge $LOG_DEBUG ] && echo "The full validation log is available here: \"$FILE_VALIDATION_LOG\""
+        # check the validation results
+        pdf_valid=1
+        grep -i 'ErrorMessage' "$FILE_VALIDATION_LOG" && pdf_valid=0
+        grep -i 'Status.*not valid' "$FILE_VALIDATION_LOG" && pdf_valid=0
+        grep -i 'Status.*Not well-formed' "$FILE_VALIDATION_LOG" && pdf_valid=0
+        ! grep -i 'Profile:.*PDF/A-1' "$FILE_VALIDATION_LOG" > /dev/null && echo "PDF file profile is not PDF/A-1" && pdf_valid=0
+        [ "$pdf_valid" -ne 1 ] && echo "Output file: The generated PDF/A file is INVALID"
+        [ "$pdf_valid" -eq 1 ] && [ $VERBOSITY -ge $LOG_INFO ] && echo "Output file: The generated PDF/A file is VALID"
+fi
 
 
 # delete temporary files
@@ -497,5 +521,5 @@ fi
 END=`date +%s`
 [ $VERBOSITY -ge $LOG_DEBUG ] && echo "Script took $(($END-$START)) seconds"
 
-
+[ "$EXTRACT_HOCR_ONLY" = "1" ] && exit 0
 [ "$pdf_valid" -ne 1 ] && exit $EXIT_INVALID_OUPUT_PDFA || exit 0

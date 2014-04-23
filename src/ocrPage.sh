@@ -25,6 +25,7 @@ PDF_NOIMG="${12}"			# Request to generate also a PDF page containing only the OC
 TESS_CFG_FILES="${13}"			# Specific configuration files to be used by Tesseract during OCRing
 FORCE_OCR="${14}"			# Force to OCR, even if the page already contains fonts
 SKIP_TEXT="${15}"                       # Skip OCR on pages that contain fonts and include the page anyway
+EXTRACT_HOCR_ONLY="${16}"              # Extract content only (hocr file)
 
 
 ##################################
@@ -83,7 +84,7 @@ getImgInfo() {
 
 	# Get characteristics of the extracted image
 	curImg=`ls -1 "$curOrigImg"* 2>/dev/null`
-	propCurImg=`identify -format "%w %h %[colorspace] %[depth] %[resolution.x] %[resolution.y]" "$curImg"`
+	propCurImg=`identify -format "%[width] %[height] %[colorspace] %[depth] %[resolution.x] %[resolution.y]" "$curImg"`
 	widthCurImg=`echo "$propCurImg" | cut -f1 -d" "`
 	heightCurImg=`echo "$propCurImg" | cut -f2 -d" "`
 	colorspaceCurImg=`echo "$propCurImg" | cut -f3 -d" "`
@@ -105,7 +106,6 @@ getImgInfo() {
                 dpi=`echo "scale=5;sqrt($widthCurImg*72*$heightCurImg*72/$widthFile/$heightFile)+0.5" | bc`
                 dpi=`echo "scale=0;$dpi/1" | bc`
         fi
-
 
 	# save the image characteristics
 	echo "DPI=$dpi" > "$curImgInfo"
@@ -266,21 +266,29 @@ else
         ln -s "$hocrFile" "$curHocr"
 fi
 
+# Keep hocr file as xml files.
+if [ "$EXTRACT_HOCR_ONLY" = "1" ]; then
+        [ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Saving text into \"$curHocr.xml\""
+        mv "$curHocr" "$curHocr.xml"
+        # Keep original path to simplify debugging.
+        ln -s "$curHocr.xml" "$curHocr"
 # embed text and image to new pdf file
-if [ "$PREPROCESS_CLEANTOPDF" = "1" ]; then
-	image4finalPDF="$curImgPixmapClean"
 else
-	image4finalPDF="$curImgPixmapDeskewed"
-fi
-[ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Embedding text in PDF"
-! python2 $SRC/hocrTransform.py -r $dpi -i "$image4finalPDF" "$curHocr" "$curOCRedPDF" \
-	&& echo "Could not create PDF file from \"$curHocr\". Exiting..." && exit $EXIT_OTHER_ERROR
+        if [ "$PREPROCESS_CLEANTOPDF" = "1" ]; then
+                image4finalPDF="$curImgPixmapClean"
+        else
+                image4finalPDF="$curImgPixmapDeskewed"
+        fi
+        [ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Embedding text in PDF"
+        ! python2 $SRC/hocrTransform.py -r $dpi -i "$image4finalPDF" "$curHocr" "$curOCRedPDF" \
+                && echo "Could not create PDF file from \"$curHocr\". Exiting..." && exit $EXIT_OTHER_ERROR
 
-# if requested generate special debug PDF page with visible OCR text
-if [ "$PDF_NOIMG" = "1" ] ; then
-	[ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Embedding text in PDF (debug page)"
-	! python2 $SRC/hocrTransform.py -b -r $dpi "$curHocr" "$curOCRedPDFDebug" \
-		&& echo "Could not create PDF file from \"$curHocr\". Exiting..." && exit $EXIT_OTHER_ERROR
+        # if requested generate special debug PDF page with visible OCR text
+        if [ "$PDF_NOIMG" = "1" ] ; then
+                [ $VERBOSITY -ge $LOG_DEBUG ] && echo "$typeFile $page: Embedding text in PDF (debug page)"
+                ! python2 $SRC/hocrTransform.py -b -r $dpi "$curHocr" "$curOCRedPDFDebug" \
+                        && echo "Could not create PDF file from \"$curHocr\". Exiting..." && exit $EXIT_OTHER_ERROR
+        fi
 fi
 
 # delete temporary files created for the current page
